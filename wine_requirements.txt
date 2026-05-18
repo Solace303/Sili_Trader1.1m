@@ -1,0 +1,128 @@
+# ============================================================
+# FULL MT5 + Wine + Kali Linux Setup
+# ============================================================
+
+# ------------------------------------------------------------
+# 1. Install Wine + Required Linux Dependencies
+# ------------------------------------------------------------
+
+sudo dpkg --add-architecture i386
+sudo apt update
+
+sudo apt install -y \
+wine64 \
+wine32 \
+winbind \
+cabextract \
+winetricks \
+libvulkan1 \
+libvulkan1:i386
+
+# ------------------------------------------------------------
+# 2. Create Dedicated Wine Prefix for MT5
+# ------------------------------------------------------------
+
+export WINEPREFIX=/home/$USER/.mt5
+
+wineboot
+
+# ------------------------------------------------------------
+# 3. Install Visual C++ Runtime (IMPORTANT)
+# ------------------------------------------------------------
+
+WINEPREFIX=/home/$USER/.mt5 winetricks vcrun2022
+
+# ------------------------------------------------------------
+# 4. Install Python 3.12 Inside Wine
+# ------------------------------------------------------------
+
+# Download:
+# https://www.python.org/downloads/release/python-3123/
+
+# Example installer execution:
+WINEPREFIX=/home/$USER/.mt5 wine ~/Downloads/python-3.12.3-amd64.exe
+
+# During install:
+# ✔ Add Python to PATH
+# ✔ Install for all users
+
+# ------------------------------------------------------------
+# 5. Verify Wine Python
+# ------------------------------------------------------------
+
+WINEPREFIX=/home/$USER/.mt5 wine python --version
+
+# ------------------------------------------------------------
+# 6. Install MT5 Bridge Dependencies INSIDE Wine Python
+# ------------------------------------------------------------
+
+WINEPREFIX=/home/$USER/.mt5 wine python -m pip install --upgrade pip
+
+WINEPREFIX=/home/$USER/.mt5 wine python -m pip install \
+MetaTrader5 \
+mt5linux==1.0.3 \
+rpyc==5.2.3 \
+numpy==1.26.4
+
+# IMPORTANT:
+# numpy==1.26.4 avoids:
+# ucrtbase.dll.crealf Wine crash
+
+# ------------------------------------------------------------
+# 7. Install Linux-side Bot Dependencies
+# ------------------------------------------------------------
+
+pip install -r requirements.txt
+
+# ------------------------------------------------------------
+# 8. Launch MetaTrader 5
+# ------------------------------------------------------------
+
+WINEPREFIX=/home/$USER/.mt5 wine \
+"/home/$USER/.mt5/drive_c/Program Files/MetaTrader 5/terminal64.exe"
+
+# ------------------------------------------------------------
+# 9. Start mt5linux RPC Bridge
+# ------------------------------------------------------------
+
+WINEPREFIX=/home/$USER/.mt5 wine python -m mt5linux
+
+# Expected:
+# server started on [127.0.0.1]:18812
+
+# ------------------------------------------------------------
+# 10. Verify Bridge
+# ------------------------------------------------------------
+
+netstat -tulnp | grep 18812
+
+# Expected:
+# 127.0.0.1:18812 LISTEN
+
+# ------------------------------------------------------------
+# 11. Run Linux Trading Bot
+# ------------------------------------------------------------
+
+python main.py
+
+# ============================================================
+# Startup Order (VERY IMPORTANT)
+# ============================================================
+
+# 1. Start MT5 terminal
+# 2. Start mt5linux bridge
+# 3. Run Linux bot
+
+# ============================================================
+# Architecture
+# ============================================================
+
+# Kali Linux Bot
+#       ↓
+# mt5linux RPC bridge
+#       ↓
+# Wine Python 3.12
+#       ↓
+# MetaTrader5 package
+#       ↓
+# MT5 Terminal
