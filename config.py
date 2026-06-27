@@ -33,7 +33,7 @@ BACKTEST_MODE = False
 # ================================
 # BACKTEST SETTINGS
 # ================================
-BACKTEST_DATA_DIR = "/run/media/solace/ABBA-2E35/My_Code/Sili_Trader/forex_data"
+BACKTEST_DATA_DIR = "./Sili_Trader1.1m/forex_data"
 
 CHART_CANDLE_LIMIT = 120
 
@@ -54,18 +54,25 @@ Update according to your broker.
 """
 
 INSTRUMENTS = [
-    "EURUSD",
-    "GBPUSD",
-    "USDJPY",
-    "USDCAD",
-    "USDCHF",
-    "EURGBP",
-    "EURJPY",
-    "GBPJPY",
-    "AUDJPY",
-    "NZDJPY",
-    "AUDCAD",
+    "EURUSDz",
+    "GBPUSDz",
+    "USDJPYz",
+    "USDCADz",
+    "USDCHFz",
+    "EURGBPz",
+    "EURJPYz",
+    "GBPJPYz",
+    "AUDJPYz",
+    "NZDJPYz",
+    "AUDCADz",
+    "XAUUSDz",
 ]
+
+
+BMA_CONFIG = {
+    "instruments": "BTCUSDz",
+    "monitor_tf": "M5",
+}
 
 # ================================
 # CRT MULTI-TIMEFRAME CONFIG
@@ -74,6 +81,7 @@ CRT_TIMEFRAMES = {
     "rdc_tf":          "H4",
     "manipulation_tf": "H1",
     "execution_tf":    "M15",
+    "scalping_tf":     "M5",
 }
 
 # ================================
@@ -83,6 +91,7 @@ LOOPBACK_CANDLES = {
     "rdc_tf":          3,
     "manipulation_tf": 3,
     "execution_tf":    3,
+    "scalping_tf":     3,
     "test_tf":         500,
 }
 
@@ -100,13 +109,61 @@ BACKTEST_TIMEFRAME_RELATIVITY_SECONDS = {
 # ================================
 # TREND DETECTION SETTINGS
 # ================================
+
+# ==============================================================================
+# WARNING: Make sure you test the values  for min_threshold in a demo account and fine tune them 
+# according to what works well for you before deploying live capital.
+#Same applies to ATR_PERIOD
+# ==============================================================================
+# 
+# REFERENCE SLOPE MINIMUM THRESHOLDS (ATR VOLATILITY FILTER)
+# Use this matrix to select the appropriate baseline for your trading setup:
+#
+#   Timeframe  |  Min Slope Threshold (%)  |  Typical Strategy Style
+#  ------------+---------------------------+----------------------------
+#      M5      |           0.20%           |  Hyper-Scalping / Momentum
+#      M15     |           0.15%           |  Scalping / Fast Intraday
+#      H1      |           0.10%           |  Standard Day Trading
+#      H4      |           0.05%           |  Swing Trading / Overnight
+#
+# ==============================================================================
+
+# ==============================================================================
+# STRATEGY CONFIGURATION AND ATR LOOKBACK WINDOW REFERENCE MATRIX
+# ==============================================================================
+"""
+Use this structural guide to map the correct ATR settings inside your 
+strategy parameter files based on your trading style:
+
++-----------------+-----------------------+------------------------+----------------------------------------------------+
+
+| Trading Style   | Recommended Timeframe | Recommended ATR Period | Primary Strategy Use Case                          |
++-----------------+-----------------------+------------------------+----------------------------------------------------+
+
+| Scalping        | M5 / M15              | 7 to 10                | Tightly tracking breakout and momentum speed.      |
+| Day Trading     | M15 / H1              | 14                     | Placement of standard dynamic Stop Losses.         |
+| Swing Trading   | H4 / D1               | 14 to 20               | Finding massive overarching market structural shifts|
+| Range Detection | Any Timeframe         | 50 to 100              | Establishing baseline to verify if ATR is low.     |
++-----------------+-----------------------+------------------------+----------------------------------------------------+
+"""
+
+
 TREND_CONFIG = {
-    "reference_timeframe":   "4h",
-    "threshold_mode":        "volatility",
-    "volatility_multiplier": 2.0,
-    "volatility_window":     50,
-    "minimum_threshold":     0.0001,
+    "ATR_PERIOD": 10,
+    "min_treshold_%": 0.09,
 }
+
+# ================================================
+# WICK-TO-BODY RATIO REFERENCE TABLE
+# ================================================
+"""
+Ratio (from config) | What it requires                          | Body as % of total candle range | Strength in your strategy
+--------------------|-------------------------------------------|---------------------------------|----------------------------
+0.5                 | Wick ≥ 50% of body size                   | ~67% (quite large body)         | Very easy to pass
+1.0                 | Wick = body size                          | 50%                             | Moderate
+2.0                 | Wick = 2× body size                       | 33%                             | Strong
+3.0                 | Wick = 3× body size                       | 25%                             | Very strong
+"""
 
 # ================================================
 # WICK REJECTION CONFIGURATION
@@ -122,7 +179,8 @@ WICK_REJECTION_CONFIG = {
 RISK_CONFIG = {
     "risk_per_trade": 0.01,
     "min_risk":       0.005,
-    "recovery_trigger": 0.25,
+    "recovery_trigger": 0.10,
+    "max_drawdown":     0.15,
 }
 
 # =============================================================================

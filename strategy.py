@@ -15,9 +15,10 @@ import logging
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-
 from sklearn.linear_model import LinearRegression
-
+import matplotlib.pyplot as plt
+from helpers import Utils
+from config import TREND_CONFIG
 from config import (
     LOOPBACK_CANDLES,
     TREND_CONFIG,
@@ -441,7 +442,6 @@ def trend_analysis(df, timeframe, price_column="close"):
 
     return trend_df
 
-
 # =============================================================================
 # RANGE TREND ANALYSIS
 # =============================================================================
@@ -449,7 +449,7 @@ def analyze_trend_in_range(
     df,
     start_time,
     end_time,
-    timeframe='15min',
+    timeframe='M15',
     price_column='close',
     plot=False
 ):
@@ -468,6 +468,10 @@ def analyze_trend_in_range(
         timeframe
     )
 
+    # =====================================================
+    # RESAMPLE CLOSE PRICES
+    # =====================================================
+
     price = (
         df[price_column]
         .resample(pandas_timeframe)
@@ -475,10 +479,33 @@ def analyze_trend_in_range(
         .dropna()
     )
 
+    # =====================================================
+    # RESAMPLE OHLC FOR ATR
+    # =====================================================
+
+    ohlc = (
+        df[["high", "low", "close"]]
+        .resample(pandas_timeframe)
+        .agg({
+            "high": "max",
+            "low": "min",
+            "close": "last"
+        })
+        .dropna()
+    )
+
     parsed_start = pd.to_datetime(start_time)
     parsed_end = pd.to_datetime(end_time)
 
-    price_slice = price.loc[parsed_start:parsed_end]
+    price_slice = price.loc[
+        parsed_start:
+        parsed_end
+    ]
+
+    ohlc_slice = ohlc.loc[
+        parsed_start:
+        parsed_end
+    ]
 
     if price_slice.empty:
 
@@ -489,9 +516,41 @@ def analyze_trend_in_range(
 
         return None
 
+    # =====================================================
+    # ATR CALCULATION
+    # =====================================================
+
+    if len(ohlc_slice) < TREND_CONFIG["ATR_PERIOD"] + 1:
+
+        logging.warning(
+            f"Need at least "
+            f"{TREND_CONFIG['ATR_PERIOD'] + 1} candles "
+            f"for ATR calculation"
+        )
+
+        return None
+
+    atr = Utils.calculate_atr(
+        ohlc_slice
+    )
+
+    if atr is None or atr <= 0:
+
+        logging.warning(
+            "Invalid ATR value"
+        )
+
+        return None
+
+    # =====================================================
+    # LINEAR REGRESSION
+    # =====================================================
+
     y = price_slice.values
 
-    X = np.arange(len(y)).reshape(-1, 1)
+    X = np.arange(
+        len(y)
+    ).reshape(-1, 1)
 
     model = LinearRegression()
 
@@ -501,29 +560,73 @@ def analyze_trend_in_range(
 
     mean_price = np.mean(y)
 
-    normalized_slope = slope / mean_price
-
-    trend_direction = (
-        "Uptrend"
-        if normalized_slope > 0
-        else "Downtrend"
+    normalized_slope = (
+        slope / mean_price
     )
 
+    # =====================================================
+    # ATR NORMALIZED SLOPE
+    # =====================================================
+
+    atr_slope = (
+        slope / atr
+    )
+
+    # =====================================================
+    # TREND CLASSIFICATION
+    # =====================================================
+
+    if abs(atr_slope) < TREND_CONFIG["min_treshold_%"]:
+
+        trend_direction = "Range"
+
+    elif atr_slope > 0:
+
+        trend_direction = "Uptrend"
+
+    else:
+
+        trend_direction = "Downtrend"
+
+    # =====================================================
+    # RESULT
+    # =====================================================
+
     result = {
-        "trend_direction": trend_direction,
-        "normalized_slope": normalized_slope,
-        "start_price": price_slice.iloc[0],
-        "end_price": price_slice.iloc[-1]
+
+        "trend_direction":
+        trend_direction,
+
+        "normalized_slope":
+        normalized_slope,
+
+        "atr_slope":
+        atr_slope,
+
+        "atr":
+        atr,
+
+        "start_price":
+        price_slice.iloc[0],
+
+        "end_price":
+        price_slice.iloc[-1],
+
+        "candle_count":
+        len(price_slice)
     }
 
-    # -------------------------------------------------------------------------
+    # =====================================================
     # PLOT
-    # -------------------------------------------------------------------------
+    # =====================================================
+
     if plot:
 
         trendline = model.predict(X)
 
-        plt.figure(figsize=(12, 6))
+        plt.figure(
+            figsize=(12, 6)
+        )
 
         plt.plot(
             price_slice.index,
@@ -535,18 +638,27 @@ def analyze_trend_in_range(
             price_slice.index,
             trendline,
             linestyle='--',
-            label=f"Trendline ({normalized_slope:.6f})"
+            label=(
+                f"Trendline "
+                f"(ATR Slope="
+                f"{atr_slope:.4f})"
+            )
         )
 
         plt.title(
-            f"Trend Analysis "
-            f"{parsed_start} → {parsed_end}"
+            f"Trend Analysis\n"
+            f"{parsed_start} → "
+            f"{parsed_end}\n"
+            f"ATR={atr:.5f} | "
+            f"{trend_direction}"
         )
 
         plt.xlabel("Date")
+
         plt.ylabel("Price")
 
         plt.grid(True)
+
         plt.legend()
 
         plt.tight_layout()

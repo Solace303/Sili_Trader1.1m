@@ -15,6 +15,27 @@ class RiskManager:
 
         self.fetcher = fetcher
         self.journal = journal
+        self._journal_synced = False
+    # =====================================================
+    # SYNC JURNAL
+    # =====================================================
+    
+    def _sync_journal(self):
+
+        if self._journal_synced:
+            return
+
+        try:
+
+            self.journal.update()
+
+            self._journal_synced = True
+
+        except Exception as e:
+
+            logger.error(
+                f"Error occurred while syncing journal: {e}"
+            )
 
     # =====================================================
     # CURRENT PRICE
@@ -30,27 +51,43 @@ class RiskManager:
     # EXCHANGE RATE
     # =====================================================
 
-    def _exchange_rate(self, from_ccy, to_ccy):
+    def _exchange_rate(
+        self,
+        from_ccy,
+        to_ccy,
+        suffix=""
+    ):
 
         if from_ccy == to_ccy:
             return 1.0
 
         try:
-            return self._mid(f"{from_ccy}{to_ccy}")
+
+            return self._mid(
+                f"{from_ccy}{to_ccy}{suffix}"
+            )
 
         except:
 
             try:
-                return 1 / self._mid(f"{to_ccy}{from_ccy}")
+
+                return 1 / self._mid(
+                    f"{to_ccy}{from_ccy}{suffix}"
+                )
 
             except:
 
-                # -----------------------------------------
-                # Fallback through USD
-                # -----------------------------------------
+                # ---------------------------------
+                # FALLBACK THROUGH USD
+                # ---------------------------------
 
-                a = self._mid(f"{from_ccy}USD")
-                b = self._mid(f"USD{to_ccy}")
+                a = self._mid(
+                    f"{from_ccy}USD{suffix}"
+                )
+
+                b = self._mid(
+                    f"USD{to_ccy}{suffix}"
+                )
 
                 return a * b
 
@@ -77,18 +114,41 @@ class RiskManager:
         lot_type="standard"
     ):
 
+        # -----------------------------------------
+        # SPLIT SYMBOL
+        # EURUSDz ->
+        # base=EUR
+        # quote=USD
+        # suffix=z
+        # -----------------------------------------
+
         base = instrument[:3]
-        quote = instrument[3:]
 
-        pip_size = self.get_pip_size(instrument)
+        quote = instrument[3:6]
 
-        contract_size = LOT_SIZE_CONFIG[lot_type]
+        suffix = instrument[6:]
 
-        pip_value_quote = pip_size * contract_size
+        pip_size = self.get_pip_size(
+            instrument
+        )
+
+        contract_size = LOT_SIZE_CONFIG[
+            lot_type
+        ]
+
+        pip_value_quote = (
+            pip_size * contract_size
+        )
+
+        # -----------------------------------------
+        # CONVERT QUOTE CURRENCY
+        # TO ACCOUNT CURRENCY
+        # -----------------------------------------
 
         rate = self._exchange_rate(
             quote,
-            account_currency
+            account_currency,
+            suffix
         )
 
         return pip_value_quote * rate
@@ -102,10 +162,12 @@ class RiskManager:
         instrument,
         entry,
         stop,
-        lot_type="standard"
+        lot_type="micro"
     ):
 
+        self._sync_journal()
         account = self.fetcher.get_account_summary()
+        logger.debug(f"Account summary: {account}")
 
         balance = account["balance"]
 
@@ -138,6 +200,28 @@ class RiskManager:
             sl_pips * pip_value
         )
 
+        # ---------------------------------------------
+        # Broker Volume Constraints
+        # ---------------------------------------------
+
+        symbol_info = self.fetcher.get_symbol_info(
+            instrument
+        )
+
+        volume_step = symbol_info.volume_step
+        volume_min = symbol_info.volume_min
+        volume_max = symbol_info.volume_max
+
+        # Round to nearest valid broker step
+        lot_size = (
+            round(lot_size / volume_step)
+            * volume_step
+        )
+
+        # Enforce broker limits
+        lot_size = max(volume_min, lot_size)
+        lot_size = min(volume_max, lot_size)
+
         logger.info(
             f"[RISK] {instrument} | "
             f"risk={risk_percent:.4f} | "
@@ -145,7 +229,7 @@ class RiskManager:
             f"lot={lot_size}"
         )
 
-        return round(lot_size, 2)
+        return lot_size
 
     # =====================================================
     # CALCULATE UNITS
@@ -167,6 +251,7 @@ class RiskManager:
 
     def calculate_risk_amount(self, instrument):
 
+        self._sync_journal()
         account = self.fetcher.get_account_summary()
 
         balance = account["balance"]
@@ -183,31 +268,33 @@ class RiskManager:
 
     def calculate_potential_profit(
         self,
+        instrument,
         entry,
         take_profit,
-        position_size,
-        trade_type
+        lot_size,
+        account_currency,
+        lot_type="micro"
     ):
 
-        if trade_type == "BUY":
+        pip_size = self.get_pip_size(
+            instrument
+        )
 
-            price_diff = (
-                take_profit - entry
-            )
+        tp_pips = abs(
+            take_profit - entry
+        ) / pip_size
 
-        elif trade_type == "SELL":
+        pip_value = self.calculate_pip_value(
+            instrument,
+            account_currency,
+            lot_type
+        )
 
-            price_diff = (
-                entry - take_profit
-            )
-
-        else:
-
-            raise ValueError(
-                "trade_type must be BUY or SELL"
-            )
-
-        return price_diff * position_size
+        return (
+            tp_pips *
+            pip_value *
+            lot_size
+        )
 
     # =====================================================
     # MAIN PIPELINE
@@ -220,8 +307,14 @@ class RiskManager:
         stop,
         take_profit,
         trade_type,
-        lot_type="standard"
+        lot_type="micro"
     ):
+        
+        # -----------------------------------------
+        # FORCE JOURNAL UPDATE
+        # -----------------------------------------
+
+        self._sync_journal()
 
         # ---------------------------------------------
         # LOT SIZE

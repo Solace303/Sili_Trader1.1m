@@ -28,11 +28,11 @@ def main():
     # ==========================
     # DEFAULTS
     # ==========================
-    default_inst = "AUDUSD"
+    default_inst = "EURUSDz"
     default_entry = 1.17911
     default_sl = 1.17379
     default_tp = 1.18500
-    default_lot = "standard"
+    default_lot = "micro"
     default_type = "BUY"
 
     print("\nEnter trade details (Press Enter for defaults):\n")

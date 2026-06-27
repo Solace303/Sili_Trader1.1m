@@ -31,7 +31,7 @@ def main():
     # MT5 format example:
     # EURUSD / GBPUSD / XAUUSD
     # -----------------------------------------------------
-    test_pair="EURUSD"
+    test_pair="BTCUSDz"
     while True:
         try:
             # -------------------------------------------------
@@ -46,7 +46,15 @@ def main():
             # -------------------------------------------------
             # GET LIVE PRICE
             # -------------------------------------------------
-            entry=float(fetcher.get_current_price(test_pair))
+            price_data = fetcher.get_current_price(test_pair)
+
+            if price_data is None:
+
+                print(f"[-] Failed to get price for {test_pair}")
+                time.sleep(1)
+                continue
+
+            entry = price_data["mid"]
             # -------------------------------------------------
             # DEFINE TRADE TYPE
             # Later connect this to strategy signals

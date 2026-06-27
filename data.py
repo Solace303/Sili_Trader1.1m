@@ -73,7 +73,7 @@ MT5_TIMEFRAMES = {
 # =============================================================================
 class CandleFetcher:
     """
-    MT5 candle fetcher wrapper.
+    MT5 candle   wrapper.
     """
 
     def __init__(self):
@@ -102,11 +102,14 @@ class CandleFetcher:
         logging.info("[+] Connected to MT5 successfully")
 
         # ---------------------------------------------------------------------
-        # PRICE CACHE
+        # PRICE + DOM CACHE
         # ---------------------------------------------------------------------
         self.price_cache = {}
-        self.stream_running = False
 
+        self.dom_cache = {}
+
+        self.stream_running = False
+        
         # ---------------------------------------------------------------------
         # STORAGE
         # ---------------------------------------------------------------------
@@ -117,8 +120,21 @@ class CandleFetcher:
         self.forex_data_dir.mkdir(parents=True, exist_ok=True)
 
         self.base_storage_granularity = _norm_tf(
-            CRT_TIMEFRAMES.get("execution_tf", "M15")
+            CRT_TIMEFRAMES.get("scalping_tf", "M5")
         )
+    #=============================
+    #GET SYMBOL INFO
+    #=============================
+    def get_symbol_info(self, instrument):
+
+        symbol_info = self.client.symbol_info(instrument)
+
+        if symbol_info is None:
+            logging.error(f"[{instrument}] Symbol not found in MT5")
+            return None
+
+        return symbol_info
+
 
     # =========================================================================
     # FETCH CANDLES
@@ -140,7 +156,7 @@ class CandleFetcher:
         # ---------------------------------------------------------------------
         if should_persist:
 
-            output_file = self.forex_data_dir / f"{instrument}.csv"
+            output_file = self.forex_data_dir / f"{instrument}_{granularity}.csv"
 
             if output_file.exists():
 
@@ -197,7 +213,7 @@ class CandleFetcher:
         # ---------------------------------------------------------------------
         # ENSURE SYMBOL IS AVAILABLE
         # ---------------------------------------------------------------------
-        symbol_info = self.client.symbol_info(instrument)
+        symbol_info = self.get_symbol_info(instrument)
 
         if symbol_info is None:
             logging.error(f"[{instrument}] Symbol not found in MT5")
@@ -271,7 +287,7 @@ class CandleFetcher:
 
             final_df = self._enrich_dataframe(final_df)
 
-            output_file = self.forex_data_dir / f"{instrument}.csv"
+            output_file = self.forex_data_dir / f"{instrument}_{granularity}.csv"
 
             final_df.to_csv(output_file, index=True)
 
@@ -371,9 +387,27 @@ class CandleFetcher:
     # =========================================================================
     def get_current_price(self, instrument):
 
+        symbol_info = self.client.symbol_info(instrument)
+
+        if symbol_info is None:
+
+            logging.error(
+                f"[{instrument}] Symbol does not exist"
+            )
+
+            return None
+
+        if not symbol_info.visible:
+            self.client.symbol_select(instrument, True)
+
         tick = self.client.symbol_info_tick(instrument)
 
         if tick is None:
+
+            logging.error(
+                f"[{instrument}] Failed to get tick data"
+            )
+
             return None
 
         return {
@@ -381,8 +415,29 @@ class CandleFetcher:
             "ask": tick.ask,
             "mid": (tick.bid + tick.ask) / 2,
             "spread": tick.ask - tick.bid,
-            "time": pd.to_datetime(tick.time, unit="s", utc=True)
+            "time": pd.to_datetime(
+                tick.time,
+                unit="s",
+                utc=True
+            )
         }
+        
+    # =========================================================================
+    # FIND SYMBOL IF THE WRONG ONE IS SELECTED
+    # =========================================================================
+    def find_symbol(self, raw_symbol):
+
+        symbols = self.client.symbols_get()
+
+        raw_symbol = raw_symbol.upper()
+
+        for s in symbols:
+
+            if raw_symbol in s.name.upper():
+
+                return s.name
+
+        return None
 
     # =========================================================================
     # PRICE STREAM (POLLING LOOP)
@@ -443,9 +498,168 @@ class CandleFetcher:
     # =========================================================================
     def shutdown(self):
 
-        self.stream_running = False
+        self.stream_running=False
+
+        try:
+
+            for instrument in self.dom_cache:
+
+                self.client.market_book_release(
+                    instrument
+                )
+
+        except Exception:
+            pass
 
         try:
             self.client.shutdown()
+
         except Exception:
             pass
+        
+    # =========================================================================
+    # LEVEL 2 DOM STREAM
+    # =========================================================================
+    def start_dom_stream(self, instrument):
+
+        symbol_info=self.client.symbol_info(instrument)
+
+        if symbol_info is None:
+            logging.error(f"[{instrument}] Symbol not found")
+            return False
+
+        if not symbol_info.visible:
+            self.client.symbol_select(instrument, True)
+
+        if not self.client.market_book_add(instrument):
+
+            logging.error(
+                f"[{instrument}] Broker does not support DOM"
+            )
+
+            return False
+
+        logging.info(
+            f"[+] Level 2 DOM started for {instrument}"
+        )
+
+        self.dom_cache[instrument]={
+            "bids":[],
+            "asks":[],
+            "timestamp":None
+        }
+
+        def dom_loop():
+
+            while self.stream_running:
+
+                try:
+
+                    dom=self.client.market_book_get(
+                        instrument
+                    )
+
+                    if dom:
+
+                        bids=[]
+                        asks=[]
+
+                        for item in dom:
+
+                            level={
+
+                                "price":round(item.price,5),
+
+                                "volume":round(item.volume/100000,2)
+                            }
+
+                            # ---------------------------------
+                            # MT5 BOOK TYPES
+                            # ---------------------------------
+                            # 1 = BID
+                            # 2 = ASK
+                            # ---------------------------------
+                            if item.type==1:
+                                asks.append(level)
+
+                            elif item.type==2:
+                                bids.append(level)
+
+                        # -------------------------------------
+                        # SORT LEVELS
+                        # -------------------------------------
+
+                        # Asks:
+                        # highest at top
+                        # lowest near center
+                        asks.sort(
+                            key=lambda x:x["price"],
+                            reverse=True
+                        )
+
+                        # Bids:
+                        # highest near center
+                        # lowest at bottom
+                        bids.sort(
+                            key=lambda x:x["price"],
+                            reverse=True
+                        )
+
+                        self.dom_cache[instrument]={
+
+                            "bids":bids,
+
+                            "asks":asks,
+
+                            "timestamp":pd.Timestamp.utcnow()
+                        }
+
+                    time.sleep(0.1)
+
+                except Exception as e:
+
+                    logging.error(
+                        f"[{instrument}] DOM error: {e}"
+                    )
+
+
+        threading.Thread(
+            target=dom_loop,
+            daemon=True
+        ).start()
+
+        return True
+
+
+    # =========================================================================
+    # GET DOM
+    # =========================================================================
+    def get_dom(self, instrument):
+
+        return self.dom_cache.get(
+            instrument,
+            []
+        )
+
+
+    # =========================================================================
+    # STOP DOM
+    # =========================================================================
+    def stop_dom_stream(self, instrument):
+
+        try:
+
+            self.client.market_book_release(instrument)
+
+            logging.info(
+                f"[+] DOM released for {instrument}"
+            )
+
+        except Exception as e:
+
+            logging.error(
+                f"[{instrument}] DOM release error: {e}"
+            )
+            
+            from config import ATR_PERIOD
+

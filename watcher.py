@@ -17,7 +17,7 @@ from execution import TradeExecutor
 from trade_journal import TradeJournal
 
 STATE_FILE = (
-    "./Sili-Trader1.1m/forex_data/watcher_state.json"
+    "/run/media/solace/ABBA-2E35/My_Code/Sili-Trader1.1m/forex_data/watcher_state.json"
 )
 logger = logging.getLogger(__name__)
 
